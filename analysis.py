@@ -1,13 +1,14 @@
 #!/usr/bin/env python
-
 import os
 import re
+from collections import defaultdict
 import urllib2
 from bs4 import BeautifulSoup
 from bs4 import Tag
 import json
 import numpy as np
-from pandas import * 
+import pandas as pd
+import matplotlib.pylab as plt
 
 def scrapeReferee(seasonID,gameID):
     print "getting"+seasonID+","+gameID
@@ -80,16 +81,67 @@ def extract(outfile):
         scrapeForSeason(str(season),'3')#playoffs
 
 def load(infile):
-    allData = np.genfromtxt(infile)
-    print allData
+    gameData=[]
+    with open(infile,'r') as f:
+        for line in f:
+            gameData.append(line.split('\t'))
+    return gameData
 
-def main():
-    filename = "./output"
+def transformWinLoss(gameData):
+    '''
+     [ref, hometeam, win/loss, awayteam, win/loss]
+    ''' 
+    winData=[]
+    for ref, homeTeam, homeScore, awayTeam, awayScore, season in gameData:
+        if int(homeScore) > int(awayScore):
+            homeWin, awayWin = 1,0
+        else:
+            homeWin, awayWin = 0,1
+        homePlay, awayPlay = 1,1
+        winData.append({"referee" : ref, "team" : homeTeam, "teamWin" : homeWin, "teamPlay" : homePlay})
+        winData.append({"referee" : ref, "team" : awayTeam, "teamWin" : awayWin, "teamPlay" : awayPlay})
+    return pd.DataFrame(winData)
+    
+def transform(gameData):
+# refHistory= { ref: { team : [total, games] }
+    winData = transformWinLoss(gameData)
+    collapsedData = winData.groupby([winData.referee,winData.team]).sum()
+    collapsedData['winPercentage'] = collapsedData["teamWin"]/collapsedData["teamPlay"]
+    totalData = winData.groupby(winData.team).sum()
+    totalData['winPercentage'] = totalData["teamWin"]/totalData["teamPlay"]
+    print totalData.sort_index(by='winPercentage', ascending=False)
+    plt.figure(figsize=(8, 8))
+    #totalData['winPercentage'].plot(kind='bar', alpha=0.5)
+    #plt.show()
+    #plt.clf()
+    print totalData.index.values
+    for team in totalData.index.values:
+        print "doing %s" % team
+        teamData = winData.loc[winData['team'] == team ].groupby(winData.referee).sum()
+        teamData = teamData[teamData['teamPlay'] > 6]
+        if teamData.empty:
+            continue
+        print teamData
+        teamData['winPercentage'] = teamData["teamWin"]/teamData["teamPlay"]
+        teamData['winPercentage'].plot(kind='bar', alpha=0.5)
+        teamAvg = totalData['winPercentage'][team]
+        print teamAvg
+        plt.ylim([0,1.0])
+        plt.axhline(teamAvg, color='k')
+        plt.savefig('%s.png' % team)
+        plt.clf()
+    #collapsedData.xs('MONTREAL CANADIENS')['winPercentage'].plot(kind='bar', alpha=0.5)
+    #plt.show()
+
+if __name__ == "__main__":
+    filename = "./output.dat"
+    print filename
     print os.path.exists(filename)
     if not os.path.exists(filename):
+        print "extract"
         extract(filename)
     else:
-        print "loading"
-        load(filename)
-
-main()
+        print "load"
+        gameData=load(filename)
+        print "transform"
+        transform(gameData)
